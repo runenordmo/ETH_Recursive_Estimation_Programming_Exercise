@@ -95,6 +95,42 @@ estState.tm = tm; % update measurement update time
 
 % prior update
 
+% solve differential equation for mean x_prior[k]
+processEquationWithoutNoise = @(t,x,u,cd,cr) [
+    x(3); 
+    x(4);
+    cos(x(5))*(tanh(u(1))-cd*(x(3)^2+x(4)^2));
+    sin(x(5))*(tanh(u(1))-cd*(x(3)^2+x(4)^2));
+    cr*u(2);
+    0
+];
+[~,x] = ode45(@(t,x) processEquationWithoutNoise(t,x,actuate,estConst.dragCoefficient,estConst.rudderCoefficient), ...
+    [0 dt], estState.xm);
+estState.xp = x(end,:)'; % last state in sim is x_prior[k]
+
+% solve differential equation for variance P_prior[k]
+cd = estConst.dragCoefficient;
+cr = estConst.rudderCoefficient;
+u = actuate;
+x = estState.xp;
+% A_t = [
+%     0 0                    1                    0                                          0 0;
+%     0 0                    0                    1                                          0 0;
+%     0 0 -2*cd*cos(x(5))*x(3) -2*cd*cos(x(5))*x(4) -sin(x(5))*(tanh(u(1))-cd*(x(3)^2+x(2)^2)) 0;
+%     0 0 -2*cd*sin(x(5))*x(3) -2*cd*sin(x(5))*x(4)  cos(x(5))*(tanh(u(1))-cd*(x(3)^2+x(2)^2)) 0;
+%     0 0                    0                    0                                          0 0;
+%     0 0                    0                    0                                          0 0
+% ];
+
+% L_t = [
+%                                 0       0 0;
+%                                 0       0 0;
+%     -cos(x(5))*cd*(x(3)^2+x(4)^2)       0 0;
+%     -sin(x(5))*cd*(x(3)^2+x(4)^2)       0 0;
+%                                 0 cr*u(1) 0;
+%                                 0       0 1
+% ];
+
 % measurement update
 
 % Get resulting estimates and variances
