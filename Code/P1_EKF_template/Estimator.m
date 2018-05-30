@@ -67,16 +67,16 @@ if (tm == 0)
     % Do the initialization of your estimator here!
     
     % initial state mean
-    posEst = [0 0]; % 1x2 matrix
-    linVelEst = [0 0]; % 1x2 matrix
-    oriEst = 0; % 1x1 matrix
-    driftEst = 0; % 1x1 matrix
+    posEst = [0 0];
+    linVelEst = [0 0];
+    oriEst = 0;
+    driftEst = 0;
     
     % initial state variance
-    posVar = [(1/4)*estConst.StartRadiusBound^2 (1/4)*estConst.StartRadiusBound^2]; % 1x2 matrix
-    linVelVar = [0 0]; % 1x2 matrix
-    oriVar = (1/3)*estConst.RotationStartBound.^2; % 1x1 matrix
-    driftVar = 0; % 1x1 matrix
+    posVar = [(1/4)*estConst.StartRadiusBound^2 (1/4)*estConst.StartRadiusBound^2];
+    linVelVar = [0 0];
+    oriVar = (1/3)*estConst.RotationStartBound.^2;
+    driftVar = 0;
     
     % estimator variance init (initial posterior variance)
     estState.Pm = diag([posVar,linVelVar,oriVar,driftVar]);
@@ -105,28 +105,25 @@ Pp = reshape(xpAndPpEnd(7:42),[6 6]);
 % measurement update
 
 % Set up convenient variables
-xa = estConst.pos_radioA(1);
-ya = estConst.pos_radioA(2);
-xb = estConst.pos_radioB(1);
-yb = estConst.pos_radioB(2);
-xc = estConst.pos_radioC(1);
-yc = estConst.pos_radioC(2);
-
-xDistA = xp(1) - xa;
-yDistA = xp(2) - ya;
-xDistB = xp(1) - xb;
-yDistB = xp(2) - yb;
-xDistC = xp(1) - xc;
-yDistC = xp(2) - yc;
-distA = norm([xp(1);xp(2)]-[xa;ya],2);
-distB = norm([xp(1);xp(2)]-[xb;yb],2);
-distC = norm([xp(1);xp(2)]-[xc;yc],2);
+xDistA = xp(1) - estConst.pos_radioA(1);
+yDistA = xp(2) - estConst.pos_radioA(2);
+xDistB = xp(1) - estConst.pos_radioB(1);
+yDistB = xp(2) - estConst.pos_radioB(2);
+xDistC = xp(1) - estConst.pos_radioC(1);
+yDistC = xp(2) - estConst.pos_radioC(2);
+distA = sqrt(xDistA^2 + yDistA^2);
+distB = sqrt(xDistB^2 + yDistB^2);
+distC = sqrt(xDistC^2 + yDistC^2);
 
 % Set equal to prior update initially
 xm = xp; Pm = Pp;
 
+% Extract measurement
 zk = sense';
-if(isfinite(zk(3)))
+
+% Perform measurement update according to availability of measurement 3 
+measurement3Available = isfinite(zk(3));
+if(measurement3Available)
     Hk = zeros(5,6);
     Hk = [ ...
         xDistA/distA yDistA/distA 0 0 0 0;
@@ -165,10 +162,10 @@ else
         estConst.GyroNoise, estConst.CompassNoise]);
 end
 
-K = (Pp*Hk')*inv(Hk*Pp*Hk'+ Mk*R*Mk');
+K = (Pp*Hk')/(Hk*Pp*Hk'+ Mk*R*Mk');
 xm = xp + K*(zk - hk_xp);
 Pm = (eye(6) - K*Hk)*Pp;
-    
+
 estState.xm = xm;
 estState.Pm = Pm;
 
@@ -200,14 +197,14 @@ function [dxdt] = updateDiffEq(t, xpAndPp, u, estConst)
     
     nx = 6;
     dxdt = [zeros(nx,1); zeros(nx*nx,1)];
-    % q:
+    % Process equation for the mean:
     dxdt(1) = xpAndPp(3); 
     dxdt(2) = xpAndPp(4);
     dxdt(3) = cos(xpAndPp(5))*(tanh(u(1))-cd*(xpAndPp(3)^2+xpAndPp(4)^2));
     dxdt(4) = sin(xpAndPp(5))*(tanh(u(1))-cd*(xpAndPp(3)^2+xpAndPp(4)^2));
     dxdt(5) = cr*u(2);
     dxdt(6) = 0;
-    % matrix diff. eq:
+    % Matrix differential equation for variance:
     A_mat = A(xpAndPp,estConst,u);
     L_mat = L(xpAndPp,estConst,u);
     Pp = reshape(xpAndPp(7:42),[6,6]);
