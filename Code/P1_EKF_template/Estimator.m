@@ -93,123 +93,88 @@ end
 dt = tm - estState.tm;
 estState.tm = tm; % update measurement update time
 
-% prior update
-% solve differential equation for mean x_prior[k]
-xpAndPp0 = [estState.xm; reshape(estState.Pm,[36 1])];
-[t,xpAndPp] = ode45(@(t,xpAndPp) updateDiffEq(t,xpAndPp,actuate,estConst),[tm-dt tm], [xpAndPp0]);
+% PRIOR UPDATE
+
+% Set up differential equation for prior update Hybrid EKF
+nx = 6;
+xpAndPp0 = [estState.xm; reshape(estState.Pm,[nx*nx 1])];
+[t,xpAndPp] = ode45(@(t,xpAndPp) priorUpdateDiffEq(t,xpAndPp,actuate,estConst),[tm-dt tm],[xpAndPp0]);
 xpAndPpEnd = xpAndPp(end,:)';
 
-xp = xpAndPpEnd(1:6);
-Pp = reshape(xpAndPpEnd(7:42),[6 6]);
+% Extract prior estimate and variance
+xp = xpAndPpEnd(1:nx);
+Pp = reshape(xpAndPpEnd(nx+1:nx+nx*nx),[nx nx]);
 
-% measurement update
+% MEASUREMENT UPDATE
 
-% Set up convenient variables
-xDistA = xp(1) - estConst.pos_radioA(1);
-yDistA = xp(2) - estConst.pos_radioA(2);
-xDistB = xp(1) - estConst.pos_radioB(1);
-yDistB = xp(2) - estConst.pos_radioB(2);
-xDistC = xp(1) - estConst.pos_radioC(1);
-yDistC = xp(2) - estConst.pos_radioC(2);
-distA = sqrt(xDistA^2 + yDistA^2);
-distB = sqrt(xDistB^2 + yDistB^2);
-distC = sqrt(xDistC^2 + yDistC^2);
-
-% Set equal to prior update initially
+% Set posterior equal to prior initially
 xm = xp; Pm = Pp;
 
 % Extract measurement
 zk = sense';
 
 % Perform measurement update according to availability of measurement 3 
-measurement3Available = isfinite(zk(3));
-if(measurement3Available)
-    Hk = zeros(5,6);
-    Hk = [ ...
-        xDistA/distA yDistA/distA 0 0 0 0;
-        xDistB/distB yDistB/distB 0 0 0 0;
-        xDistC/distC yDistC/distC 0 0 0 0;
-                   0            0 0 0 1 1;
-                   0            0 0 0 1 0;
-    ];
-    Mk = eye(5);
-    hk_xp = [ ...
-        distA;
-        distB;
-        distC;
-        xp(5) + xp(6);
-        xp(5);
-    ];
-    R = diag([estConst.DistNoiseA,estConst.DistNoiseB, ...
-        estConst.DistNoiseC, estConst.GyroNoise, estConst.CompassNoise]);
+isMeasurement3Available = isfinite(zk(3));
+if(isMeasurement3Available)
+    zk_available = zk;
 else
-    zk = [zk(1:2);zk(4:5)];
-    Hk = zeros(4,6);
-    Hk = [ ...
-        xDistA/distA yDistA/distA 0 0 0 0;
-        xDistB/distB yDistB/distB 0 0 0 0;
-                   0            0 0 0 1 1;
-                   0            0 0 0 1 0;
-    ];
-    Mk = eye(4);
-    hk_xp = [ ...
-        distA;
-        distB;
-        xp(5) + xp(6);
-        xp(5);
-    ];
-    R = diag([estConst.DistNoiseA,estConst.DistNoiseB, ...
-        estConst.GyroNoise, estConst.CompassNoise]);
+    zk_available = [zk(1:2);zk(4:5)];
 end
+[H,M,h,R] = getMeasurementModel(xp,estConst,isMeasurement3Available);
 
-K = (Pp*Hk')/(Hk*Pp*Hk'+ Mk*R*Mk');
-xm = xp + K*(zk - hk_xp);
-Pm = (eye(6) - K*Hk)*Pp;
+% Update Kalman gain and posterior mean and variance
+K = (Pp*H')/(H*Pp*H'+ M*R*M');
+xm = xp + K*(zk_available - h);
+Pm = (eye(6) - K*H)*Pp;
 
+% Set posterior mean and variance in return struct estState
 estState.xm = xm;
 estState.Pm = Pm;
 
 % Get resulting estimates and variances
-% Output quantities
-posEst = estState.xm(1:2);
-linVelEst = estState.xm(3:4);
-oriEst = estState.xm(5);
-driftEst = estState.xm(6);
+% Resulting estimates
+posEst = xm(1:2);
+linVelEst = xm(3:4);
+oriEst = xm(5);
+driftEst = xm(6);
 
-pxVar = estState.Pm(1,1);
-pyVar = estState.Pm(2,2);
-sxVar = estState.Pm(3,3);
-syVar = estState.Pm(4,4);
-posVar = [pxVar pyVar];
-linVelVar = [sxVar syVar];
-oriVar = estState.Pm(5,5);
-driftVar = estState.Pm(6,6);
+% Resulting variances
+posVar = [Pm(1,1) Pm(2,2)];
+linVelVar = [Pm(3,3) Pm(4,4)];
+oriVar = Pm(5,5);
+driftVar = Pm(6,6);
 
 end
 
-function [dxdt] = updateDiffEq(t, xpAndPp, u, estConst)
-    cd = estConst.dragCoefficient;
-    cr = estConst.rudderCoefficient;
-    Qd = estConst.DragNoise;
-    Qr = estConst.RudderNoise;
-    Qb = estConst.GyroDriftNoise;
-    Q = diag([Qd,Qr,Qb]);
-    
+function [dxpAndPp_dt] = priorUpdateDiffEq(t, xpAndPp, u, estConst)
     nx = 6;
-    dxdt = [zeros(nx,1); zeros(nx*nx,1)];
+    dxpAndPp_dt = [zeros(nx,1); zeros(nx*nx,1)];
+    
     % Process equation for the mean:
-    dxdt(1) = xpAndPp(3); 
-    dxdt(2) = xpAndPp(4);
-    dxdt(3) = cos(xpAndPp(5))*(tanh(u(1))-cd*(xpAndPp(3)^2+xpAndPp(4)^2));
-    dxdt(4) = sin(xpAndPp(5))*(tanh(u(1))-cd*(xpAndPp(3)^2+xpAndPp(4)^2));
-    dxdt(5) = cr*u(2);
-    dxdt(6) = 0;
+    dxpAndPp_dt(1:nx) = q(xpAndPp, estConst,u);
     % Matrix differential equation for variance:
+    Pp = reshape(xpAndPp(nx+1:nx+nx*nx),[nx,nx]);
     A_mat = A(xpAndPp,estConst,u);
     L_mat = L(xpAndPp,estConst,u);
-    Pp = reshape(xpAndPp(7:42),[6,6]);
+    Q = diag([estConst.DragNoise,estConst.RudderNoise,estConst.GyroDriftNoise]);
+    
     matrix_eq = A_mat*Pp + Pp*A_mat' + L_mat*Q*L_mat';
-    dxdt(7:42) = reshape(matrix_eq, [36,1]);
+    dxpAndPp_dt(nx+1:nx+nx*nx) = reshape(matrix_eq, [nx*nx,1]);
+end
+
+% Process dynamics
+function [q_vec] = q(x,estConst,u) % (6x1)
+    cd = estConst.dragCoefficient;
+    cr = estConst.rudderCoefficient;
+    
+    q_vec = [
+        x(3); 
+        x(4);
+        cos(x(5))*(tanh(u(1))-cd*(x(3)^2+x(4)^2));
+        sin(x(5))*(tanh(u(1))-cd*(x(3)^2+x(4)^2));
+        cr*u(2);
+        0;
+    ];
 end
 
 function [A_mat] = A(x,estConst,u) % (6x6)
@@ -238,4 +203,55 @@ function [L_mat] = L(x,estConst,u) % (6x3)
                                 0 cr*u(1) 0;
                                 0       0 1
     ];
+end
+
+function [H,M,h,R] = getMeasurementModel(xp,estConst,isMeasurement3Available)
+    % Set up convenient variables
+    xDistA = xp(1) - estConst.pos_radioA(1);
+    yDistA = xp(2) - estConst.pos_radioA(2);
+    xDistB = xp(1) - estConst.pos_radioB(1);
+    yDistB = xp(2) - estConst.pos_radioB(2);
+    xDistC = xp(1) - estConst.pos_radioC(1);
+    yDistC = xp(2) - estConst.pos_radioC(2);
+    distA = sqrt(xDistA^2 + yDistA^2);
+    distB = sqrt(xDistB^2 + yDistB^2);
+    distC = sqrt(xDistC^2 + yDistC^2);
+
+    % Get actual measurement model
+    if(isMeasurement3Available)
+        H = [ ...
+            xDistA/distA yDistA/distA 0 0 0 0;
+            xDistB/distB yDistB/distB 0 0 0 0;
+            xDistC/distC yDistC/distC 0 0 0 0;
+                       0            0 0 0 1 1;
+                       0            0 0 0 1 0;
+        ];
+        M = eye(5);
+        h = [ ...
+            distA;
+            distB;
+            distC;
+            xp(5) + xp(6);
+            xp(5);
+        ];
+        R = diag([estConst.DistNoiseA,estConst.DistNoiseB, ...
+            estConst.DistNoiseC, estConst.GyroNoise, estConst.CompassNoise]);
+    else
+        H = [ ...
+            xDistA/distA yDistA/distA 0 0 0 0;
+            xDistB/distB yDistB/distB 0 0 0 0;
+                       0            0 0 0 1 1;
+                       0            0 0 0 1 0;
+        ];
+        M = eye(4);
+        h = [ ...
+            distA;
+            distB;
+            xp(5) + xp(6);
+            xp(5);
+        ];
+        R = diag([estConst.DistNoiseA,estConst.DistNoiseB, ...
+            estConst.GyroNoise, estConst.CompassNoise]);
+    end
+    
 end
