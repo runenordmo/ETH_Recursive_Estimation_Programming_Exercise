@@ -67,16 +67,16 @@ if (tm == 0)
     % Do the initialization of your estimator here!
     
     % initial state mean
-    posEst = [0 0]; % 1x2 matrix
-    linVelEst = [0 0]; % 1x2 matrix
-    oriEst = 0; % 1x1 matrix
-    driftEst = 0; % 1x1 matrix
+    posEst = [0 0];
+    linVelEst = [0 0];
+    oriEst = 0;
+    driftEst = 0;
     
     % initial state variance
-    posVar = [(1/4)*estConst.StartRadiusBound^2 (1/4)*estConst.StartRadiusBound^2]; % 1x2 matrix
-    linVelVar = [0 0]; % 1x2 matrix
-    oriVar = (1/3)*estConst.RotationStartBound.^2; % 1x1 matrix
-    driftVar = 0; % 1x1 matrix
+    posVar = [(1/4)*estConst.StartRadiusBound^2 (1/4)*estConst.StartRadiusBound^2];
+    linVelVar = [0 0];
+    oriVar = (1/3)*estConst.RotationStartBound.^2;
+    driftVar = 0;
     
     % estimator variance init (initial posterior variance)
     estState.Pm = diag([posVar,linVelVar,oriVar,driftVar]);
@@ -125,8 +125,12 @@ distC = norm([xp(1);xp(2)]-[xc;yc],2);
 % Set equal to prior update initially
 xm = xp; Pm = Pp;
 
+% Extract measurement
 zk = sense';
-if(isfinite(zk(3)))
+
+% Perform measurement update according to availability of measurement 3 
+measurement3Available = isfinite(zk(3));
+if(measurement3Available)
     Hk = zeros(5,6);
     Hk = [ ...
         xDistA/distA yDistA/distA 0 0 0 0;
@@ -165,7 +169,7 @@ else
         estConst.GyroNoise, estConst.CompassNoise]);
 end
 
-K = (Pp*Hk')*inv(Hk*Pp*Hk'+ Mk*R*Mk');
+K = (Pp*Hk')/(Hk*Pp*Hk'+ Mk*R*Mk');
 xm = xp + K*(zk - hk_xp);
 Pm = (eye(6) - K*Hk)*Pp;
     
