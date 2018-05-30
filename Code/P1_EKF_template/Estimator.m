@@ -124,16 +124,16 @@ zk = sense';
 % Perform measurement update according to availability of measurement 3 
 measurement3Available = isfinite(zk(3));
 if(measurement3Available)
-    Hk = zeros(5,6);
-    Hk = [ ...
+    zk_available = zk;
+    H = [ ...
         xDistA/distA yDistA/distA 0 0 0 0;
         xDistB/distB yDistB/distB 0 0 0 0;
         xDistC/distC yDistC/distC 0 0 0 0;
                    0            0 0 0 1 1;
                    0            0 0 0 1 0;
     ];
-    Mk = eye(5);
-    hk_xp = [ ...
+    M = eye(5);
+    h = [ ...
         distA;
         distB;
         distC;
@@ -143,16 +143,15 @@ if(measurement3Available)
     R = diag([estConst.DistNoiseA,estConst.DistNoiseB, ...
         estConst.DistNoiseC, estConst.GyroNoise, estConst.CompassNoise]);
 else
-    zk = [zk(1:2);zk(4:5)];
-    Hk = zeros(4,6);
-    Hk = [ ...
+    zk_available = [zk(1:2);zk(4:5)];
+    H = [ ...
         xDistA/distA yDistA/distA 0 0 0 0;
         xDistB/distB yDistB/distB 0 0 0 0;
                    0            0 0 0 1 1;
                    0            0 0 0 1 0;
     ];
-    Mk = eye(4);
-    hk_xp = [ ...
+    M = eye(4);
+    h = [ ...
         distA;
         distB;
         xp(5) + xp(6);
@@ -162,9 +161,10 @@ else
         estConst.GyroNoise, estConst.CompassNoise]);
 end
 
-K = (Pp*Hk')/(Hk*Pp*Hk'+ Mk*R*Mk');
-xm = xp + K*(zk - hk_xp);
-Pm = (eye(6) - K*Hk)*Pp;
+% Update Kalman gain and posterior mean and variance
+K = (Pp*H')/(H*Pp*H'+ M*R*M');
+xm = xp + K*(zk_available - h);
+Pm = (eye(6) - K*H)*Pp;
 
 estState.xm = xm;
 estState.Pm = Pm;
